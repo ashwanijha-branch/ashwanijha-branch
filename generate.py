@@ -1,7 +1,42 @@
 #!/usr/bin/env python3
 """Generates blackhole.svg: an animated black hole for a GitHub profile README.
 Pure SVG + SMIL (no scripts), so it animates inside GitHub's <img> sandbox."""
-import math, random
+import datetime, json, math, os, random, sys, urllib.request
+
+LOGIN = os.environ.get("GITHUB_REPOSITORY_OWNER", "ashwanijha-branch")
+QUERY = """query($login:String!){user(login:$login){contributionsCollection{contributionCalendar{
+totalContributions weeks{contributionDays{date contributionCount}}}}}}"""
+
+def fetch_stats():
+    """Real numbers for the HUD. Returns None when no token is available."""
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        return None
+    req = urllib.request.Request(
+        "https://api.github.com/graphql",
+        data=json.dumps({"query": QUERY, "variables": {"login": LOGIN}}).encode(),
+        headers={"Authorization": f"bearer {token}", "User-Agent": "profile-readme"})
+    body = json.load(urllib.request.urlopen(req, timeout=30))
+    if body.get("errors"):
+        sys.exit(f"GitHub API error: {body['errors']}")
+    cal = body["data"]["user"]["contributionsCollection"]["contributionCalendar"]
+    days = [d for w in cal["weeks"] for d in w["contributionDays"]]
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    days = [d for d in days if d["date"] <= today]
+    counts = [d["contributionCount"] for d in days]
+    tail = counts[:-1] if counts and counts[-1] == 0 else counts   # today may still be empty
+    streak = 0
+    for c in reversed(tail):
+        if c == 0:
+            break
+        streak += 1
+    active = [d["date"] for d in days if d["contributionCount"]]
+    return {"total": cal["totalContributions"], "streak": streak,
+            "peak": max(counts, default=0), "last": active[-1] if active else "--"}
+
+STATS = fetch_stats()
+def stat(key, fmt="{}"):
+    return fmt.format(STATS[key]) if STATS else "--"
 
 random.seed(7)
 W, H = 1200, 520
@@ -159,10 +194,10 @@ A('<circle cx="1034" cy="46" r="3.5" fill="#ff7a59"><animate attributeName="opac
 A('<text x="1136" y="50" font-size="12" letter-spacing="2.5" opacity=".75" text-anchor="end">LIVE FEED</text>')
 A('<text x="600" y="455" font-size="30" letter-spacing="14" fill="#f4f8ff" text-anchor="middle" font-weight="600">ASHWANI JHA</text>')
 A('<text x="600" y="482" font-size="12.5" letter-spacing="4" opacity=".8" text-anchor="middle">NOTHING ESCAPES. NOT EVEN BUGS.</text>')
-A('<text x="64" y="476" font-size="11" letter-spacing="1.5" opacity=".55">MASS 4.3e6 Msun</text>')
-A('<text x="64" y="492" font-size="11" letter-spacing="1.5" opacity=".55">SPIN  a = 0.998</text>')
-A('<text x="1136" y="476" font-size="11" letter-spacing="1.5" opacity=".55" text-anchor="end">r_s 0.085 AU</text>')
-A('<text x="1136" y="492" font-size="11" letter-spacing="1.5" opacity=".55" text-anchor="end">DISK 1.0e7 K</text>')
+A(f'<text x="64" y="476" font-size="11" letter-spacing="1.5" opacity=".6">CONTRIBUTIONS / 365D  {stat("total", "{:,}")}</text>')
+A(f'<text x="64" y="492" font-size="11" letter-spacing="1.5" opacity=".6">CURRENT STREAK  {stat("streak")} D</text>')
+A(f'<text x="1136" y="476" font-size="11" letter-spacing="1.5" opacity=".6" text-anchor="end">PEAK DAY  {stat("peak")}</text>')
+A(f'<text x="1136" y="492" font-size="11" letter-spacing="1.5" opacity=".6" text-anchor="end">LAST SIGNAL  {stat("last")}</text>')
 A('</g>')
 A('</g></svg>')
 

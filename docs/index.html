@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ASH-01 // Kerr black hole</title>
+<meta name="description" content="An interactive, ray-traced black hole. Drag to orbit, scroll to approach.">
+<style>
+  :root { --hud: #9fd8ff; --ink: #f4f8ff; --warn: #ff7a59; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #020206; overflow: hidden; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; color: var(--hud); }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  .hud { position: fixed; inset: 0; pointer-events: none; padding: 28px; text-transform: uppercase; }
+  .hud > * { position: absolute; font-size: 12px; letter-spacing: 2.5px; opacity: .78; }
+  .tl { top: 40px; left: 64px; }
+  .tr { top: 40px; right: 64px; }
+  .bl { bottom: 34px; left: 64px; line-height: 1.6; font-size: 11px !important; letter-spacing: 1.5px !important; }
+  .br { bottom: 34px; right: 64px; line-height: 1.6; text-align: right; font-size: 11px !important; letter-spacing: 1.5px !important; }
+  .title { left: 0; right: 0; bottom: 56px; text-align: center; opacity: 1 !important; }
+  .title b { display: block; color: var(--ink); font-size: clamp(18px, 3.2vw, 30px); letter-spacing: .45em; margin-right: -.45em; font-weight: 600; }
+  .title span { display: block; margin-top: 10px; font-size: 12px; letter-spacing: 4px; opacity: .8; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-right: 10px; animation: blink 1.6s infinite; }
+  @keyframes blink { 50% { opacity: .15; } }
+  .corner { width: 24px; height: 24px; border: 1.2px solid var(--hud); opacity: .45 !important; }
+  .c1 { top: 28px; left: 28px; border-right: 0; border-bottom: 0; }
+  .c2 { top: 28px; right: 28px; border-left: 0; border-bottom: 0; }
+  .c3 { bottom: 28px; left: 28px; border-right: 0; border-top: 0; }
+  .c4 { bottom: 28px; right: 28px; border-left: 0; border-top: 0; }
+  a { color: inherit; pointer-events: auto; text-decoration: none; border-bottom: 1px solid currentColor; }
+  a:hover, a:focus-visible { color: var(--ink); }
+  .hint { left: 0; right: 0; top: 40px; text-align: center; transition: opacity 1.2s; }
+  .hint.gone { opacity: 0; }
+  .fallback { position: fixed; inset: 0; display: none; place-items: center; padding: 16px; text-align: center; }
+  .fallback img { max-width: 100%; border-radius: 18px; }
+  @media (max-width: 720px) {
+    .hud { padding: 14px; }
+    .tl, .bl { left: 26px; } .tr, .br { right: 26px; }
+    .tl, .tr { top: 26px; } .bl, .br { bottom: 22px; }
+    .c1, .c2 { top: 12px; } .c3, .c4 { bottom: 12px; } .c1, .c3 { left: 12px; } .c2, .c4 { right: 12px; }
+    .hud > * { font-size: 10px; letter-spacing: 1.5px; }
+    .hint { top: 52px; }
+    .title { bottom: 76px; }
+    .title span { font-size: 10px; letter-spacing: 2px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Ray-traced black hole. Drag to orbit, scroll or pinch to change distance."></canvas>
+<div class="fallback" id="fallback">
+  <div>
+    <img src="https://raw.githubusercontent.com/ashwanijha-branch/ashwanijha-branch/main/blackhole.svg" alt="Animated black hole">
+    <p>This browser has no WebGL, so here is the non-interactive feed.</p>
+  </div>
+</div>
+<div class="hud">
+  <div class="corner c1"></div><div class="corner c2"></div><div class="corner c3"></div><div class="corner c4"></div>
+  <div class="tl">Object ASH-01 // black hole</div>
+  <div class="tr"><i class="dot"></i>Live render</div>
+  <div class="hint" id="hint">Drag to orbit &middot; scroll or pinch to approach</div>
+  <div class="title"><b>ASHWANI JHA</b><span>Nothing escapes. Not even bugs.</span></div>
+  <div class="bl"><div id="t-inc">Inclination --</div><div id="t-rng">Range --</div></div>
+  <div class="br"><div id="t-fps">-- fps</div><div><a href="https://github.com/ashwanijha-branch">Back to profile</a></div></div>
+</div>
+
+<script id="fs" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2 uRes;
+uniform float uTime;
+uniform vec3 uCam;     // camera position, in Schwarzschild radii
+uniform float uEsc;    // radius at which a ray counts as escaped
+
+const float R_IN = 3.0;    // innermost stable orbit
+const float R_OUT = 11.0;
+const int STEPS = 240;
+
+float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float hash31(vec3 p) { p = fract(p * vec3(.1031, .1030, .0973)); p += dot(p, p.yzx + 33.33); return fract((p.x + p.y) * p.z); }
+
+// value noise, periodic along x so the disk has no seam
+float pnoise(vec2 p, float period) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float x0 = mod(i.x, period), x1 = mod(i.x + 1.0, period);
+  float a = hash21(vec2(x0, i.y)), b = hash21(vec2(x1, i.y));
+  float c = hash21(vec2(x0, i.y + 1.0)), d = hash21(vec2(x1, i.y + 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+float streaks(float phi, float r, float seed) {
+  float u = phi / 6.2831853 + 0.5;
+  float n = pnoise(vec2(u * 10.0, r * 2.2 + seed), 10.0) * 0.55;
+  n += pnoise(vec2(u * 24.0, r * 5.5 + seed * 1.7), 24.0) * 0.30;
+  n += pnoise(vec2(u * 60.0, r * 12.0 + seed * 2.3), 60.0) * 0.15;
+  return n;
+}
+
+vec3 heat(float t) {
+  vec3 c = mix(vec3(0.45, 0.05, 0.01), vec3(1.0, 0.40, 0.08), smoothstep(0.15, 0.55, t));
+  c = mix(c, vec3(1.0, 0.82, 0.55), smoothstep(0.5, 0.95, t));
+  c = mix(c, vec3(0.82, 0.90, 1.0), smoothstep(0.95, 1.6, t));
+  return c;
+}
+
+// emitted colour (rgb) and opacity (a) of the disk where a ray crosses it
+vec4 disk(vec3 hit, vec3 rayDir) {
+  float r = length(hit.xz);
+  if (r < R_IN || r > R_OUT) return vec4(0.0);
+  float phi = atan(hit.z, hit.x);
+  float omega = sqrt(0.5 / (r * r * r));          // Keplerian angular velocity
+  float t = uTime * 2.2;
+  // differential rotation shears the texture forever, so cross-fade two phases
+  const float T = 36.0;
+  float ta = mod(t, T), tb = mod(t + 0.5 * T, T);
+  float wa = 1.0 - abs(2.0 * ta / T - 1.0);
+  float tex = streaks(phi - omega * ta, r, 3.0) * wa + streaks(phi - omega * tb, r, 17.0) * (1.0 - wa);
+  tex = 0.25 + 1.5 * tex * tex;
+
+  // relativistic beaming: the side rotating towards the camera is brighter and bluer
+  float beta = sqrt(0.5 / r);
+  vec3 vel = vec3(-hit.z, 0.0, hit.x) / r;
+  float dopp = sqrt(1.0 - beta * beta) / (1.0 - beta * dot(vel, -rayDir));
+  float grav = sqrt(1.0 - 1.0 / r);
+  float shift = dopp * grav;
+
+  float edge = smoothstep(R_IN, R_IN + 0.5, r) * (1.0 - smoothstep(R_OUT - 4.0, R_OUT, r));
+  float temp = pow(R_IN / r, 0.75) * shift * 0.92;
+  float power = pow(R_IN / r, 1.8) * shift * shift * shift;
+  vec3 col = heat(temp) * power * tex * 1.9;
+  return vec4(col, clamp(edge * (0.35 + 0.65 * tex), 0.0, 1.0)) * edge;
+}
+
+vec3 sky(vec3 d) {
+  vec3 col = vec3(0.0);
+  for (int l = 0; l < 2; l++) {
+    float s = l == 0 ? 55.0 : 130.0;
+    vec3 q = d * s, id = floor(q), f = fract(q) - 0.5;
+    float h = hash31(id);
+    vec3 off = (vec3(hash31(id + 7.1), hash31(id + 13.7), hash31(id + 29.3)) - 0.5) * 0.6;
+    float star = smoothstep(0.10, 0.0, length(f - off)) * step(0.80, h);
+    vec3 tint = mix(vec3(1.0, 0.86, 0.72), vec3(0.74, 0.84, 1.0), hash31(id + 3.3));
+    col += tint * star * (0.5 + 2.5 * fract(h * 57.0)) * (l == 0 ? 1.0 : 0.55);
+  }
+  float n = pnoise(d.xy * 2.5 + d.z * 1.3 + 5.0, 64.0) * pnoise(d.zy * 3.5 - d.x + 9.0, 64.0);
+  col += mix(vec3(0.20, 0.07, 0.32), vec3(0.03, 0.22, 0.26), smoothstep(-0.6, 0.6, d.x)) * n * n * 0.16;
+  return col;
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y * 1.6);
+  vec3 fw = normalize(-uCam);
+  vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(rt, fw);
+  vec3 v = normalize(fw + (uv.x * rt + uv.y * up) * 1.15);
+  vec3 p = uCam;
+
+  // Null geodesics around a non-rotating hole: with h = |p x v| conserved, the path obeys
+  // p'' = -1.5 h^2 p / |p|^5 (units where the Schwarzschild radius is 1).
+  vec3 hv = cross(p, v);
+  float h2 = dot(hv, hv);
+
+  vec3 col = vec3(0.0);
+  float trans = 1.0;
+  bool captured = false;
+  for (int i = 0; i < STEPS; i++) {
+    float r2 = dot(p, p);
+    if (r2 < 1.0) { captured = true; break; }
+    float r = sqrt(r2);
+    if (r > uEsc && dot(p, v) > 0.0) break;
+    float dt = clamp(0.045 * r, 0.02, 1.6);
+    if (abs(p.y) < 0.6) dt = min(dt, 0.02 + abs(p.y) * 0.5);   // do not step over the disk
+    v += -1.5 * h2 * p / (r2 * r2 * r) * dt;
+    vec3 np = p + v * dt;
+
+    // thin haze hugging the disk plane, and two faint polar jets
+    float rho2 = dot(p.xz, p.xz);
+    float haze = exp(-abs(p.y) * 2.5) * smoothstep(R_OUT + 2.0, R_IN, r) * smoothstep(1.4, R_IN, r) / (1.0 + r2 * 0.12);
+    col += trans * vec3(1.0, 0.45, 0.12) * haze * dt * 0.045;
+    float jet = exp(-rho2 * 9.0 / (1.0 + abs(p.y) * 0.25)) * exp(-abs(p.y) * 0.22) * smoothstep(1.0, 2.5, abs(p.y));
+    col += trans * vec3(0.35, 0.60, 1.0) * jet * dt * 0.05;
+
+    if (p.y * np.y < 0.0) {
+      vec3 hit = mix(p, np, p.y / (p.y - np.y));
+      vec4 d = disk(hit, normalize(v));
+      col += trans * d.rgb;
+      trans *= 1.0 - d.a;
+      if (trans < 0.01) break;
+    }
+    p = np;
+  }
+  if (!captured) col += trans * sky(normalize(v));
+
+  col = 1.0 - exp(-col * 1.25);
+  col = pow(col, vec3(0.4545));
+  float vig = smoothstep(1.25, 0.25, length((gl_FragCoord.xy / uRes - 0.5) * vec2(1.0, 0.85)) * 1.6);
+  gl_FragColor = vec4(col * mix(0.72, 1.0, vig), 1.0);
+}
+</script>
+
+<script>
+(function () {
+  var canvas = document.getElementById('c');
+  var gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'high-performance' });
+  if (!gl) return fail();
+
+  function fail() {
+    canvas.style.display = 'none';
+    document.getElementById('fallback').style.display = 'grid';
+    document.getElementById('hint').style.display = 'none';
+  }
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); return null; }
+    return s;
+  }
+  var vs = compile(gl.VERTEX_SHADER, 'attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }');
+  var fs = compile(gl.FRAGMENT_SHADER, document.getElementById('fs').textContent);
+  if (!vs || !fs) return fail();
+  var prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(prog)); return fail(); }
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  var loc = gl.getAttribLocation(prog, 'a');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  var U = {};
+  ['uRes', 'uTime', 'uCam', 'uEsc'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+
+  // camera: azimuth, elevation (radians) and distance in Schwarzschild radii
+  var az = 0.6, el = 0.10, dist = 24, tAz = az, tEl = el, tDist = dist;
+  var vAz = 0, vEl = 0, hoverX = 0, hoverY = 0, lastInput = -1e9;
+  var EL_MAX = 1.48, D_MIN = 3.2, D_MAX = 42;
+  var pointers = {}, pinch = 0, dragging = false;
+  var hint = document.getElementById('hint');
+  var still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function touched() { lastInput = performance.now(); hint.classList.add('gone'); }
+  function count() { return Object.keys(pointers).length; }
+  function spread() {
+    var k = Object.keys(pointers), a = pointers[k[0]], b = pointers[k[1]];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+  canvas.addEventListener('pointerdown', function (e) {
+    canvas.setPointerCapture(e.pointerId);
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    dragging = true; canvas.classList.add('dragging');
+    if (count() === 2) pinch = spread();
+    touched();
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    var p = pointers[e.pointerId];
+    if (!p) {                                   // hovering: lean the camera towards the cursor
+      hoverX = e.clientX / innerWidth - 0.5; hoverY = e.clientY / innerHeight - 0.5;
+      return;
+    }
+    var dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    if (count() === 2) {
+      var s = spread();
+      if (pinch > 0) tDist = clamp(tDist * pinch / s, D_MIN, D_MAX);
+      pinch = s;
+    } else {
+      vAz = dx * 0.006; vEl = dy * 0.006;
+      tAz += vAz; tEl = clamp(tEl + vEl, -EL_MAX, EL_MAX);
+    }
+    touched();
+  });
+  function release(e) {
+    delete pointers[e.pointerId];
+    pinch = 0;
+    if (count() === 0) { dragging = false; canvas.classList.remove('dragging'); }
+  }
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('pointerleave', function () { hoverX = hoverY = 0; });
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    tDist = clamp(tDist * Math.exp(e.deltaY * 0.0012), D_MIN, D_MAX);
+    touched();
+  }, { passive: false });
+  window.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k === 'ArrowLeft') tAz -= 0.12; else if (k === 'ArrowRight') tAz += 0.12;
+    else if (k === 'ArrowUp') tEl = clamp(tEl + 0.08, -EL_MAX, EL_MAX);
+    else if (k === 'ArrowDown') tEl = clamp(tEl - 0.08, -EL_MAX, EL_MAX);
+    else if (k === '+' || k === '=') tDist = clamp(tDist * 0.9, D_MIN, D_MAX);
+    else if (k === '-') tDist = clamp(tDist / 0.9, D_MIN, D_MAX);
+    else return;
+    touched();
+  });
+  function clamp(x, a, b) { return Math.min(b, Math.max(a, x)); }
+
+  // render below native resolution when the GPU cannot keep up
+  var maxScale = Math.min(window.devicePixelRatio || 1, 1.5), scale = Math.min(1, maxScale);
+  function resize() {
+    var w = Math.max(2, Math.round(innerWidth * scale)), h = Math.max(2, Math.round(innerHeight * scale));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; gl.viewport(0, 0, w, h); }
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  var elInc = document.getElementById('t-inc'), elRng = document.getElementById('t-rng'), elFps = document.getElementById('t-fps');
+  var last = performance.now(), acc = 0, frames = 0, simTime = 0;
+
+  function frame(now) {
+    var dt = Math.min(0.1, (now - last) / 1000); last = now;
+    simTime += still ? 0 : dt;
+
+    if (!dragging) {
+      tAz += vAz; tEl = clamp(tEl + vEl, -EL_MAX, EL_MAX);
+      vAz *= 0.93; vEl *= 0.93;
+      if (!still && now - lastInput > 2500) tAz += dt * 0.035;       // idle drift
+    }
+    var k = 1 - Math.exp(-dt * 9);
+    az += (tAz - az) * k; el += (tEl - el) * k; dist += (tDist - dist) * k;
+
+    var a = az + hoverX * 0.10, e = clamp(el + hoverY * 0.07, -EL_MAX, EL_MAX);
+    gl.uniform2f(U.uRes, canvas.width, canvas.height);
+    gl.uniform1f(U.uTime, simTime);
+    gl.uniform3f(U.uCam, dist * Math.cos(e) * Math.cos(a), dist * Math.sin(e), dist * Math.cos(e) * Math.sin(a));
+    gl.uniform1f(U.uEsc, Math.max(30, dist + 8));
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    acc += dt; frames++;
+    if (acc >= 0.5) {
+      var fps = frames / acc;
+      elInc.textContent = 'Inclination ' + (90 - Math.abs(e) * 57.2958).toFixed(1) + '°';
+      elRng.textContent = 'Range ' + dist.toFixed(1) + ' r_s';
+      elFps.textContent = fps.toFixed(0) + ' fps';
+      if (fps < 40 && scale > 0.35) { scale = Math.max(0.35, scale * 0.82); resize(); }
+      else if (fps > 57 && scale < maxScale) { scale = Math.min(maxScale, scale * 1.06); resize(); }
+      acc = 0; frames = 0;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
