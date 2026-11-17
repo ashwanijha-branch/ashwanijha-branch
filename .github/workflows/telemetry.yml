@@ -1,0 +1,29 @@
+name: Refresh telemetry
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [generate.py]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate the SVG with current numbers
+        run: python3 generate.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Commit if the numbers changed
+        run: |
+          if git diff --quiet -- blackhole.svg; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qm "Refresh telemetry" blackhole.svg
+          git push
