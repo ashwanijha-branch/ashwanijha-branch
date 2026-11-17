@@ -190,6 +190,7 @@ A(f'<g {F} fill="#9fd8ff" stroke="none">')
 A('<g fill="none" stroke="#9fd8ff" stroke-opacity=".45" stroke-width="1.2">'
   '<path d="M28,52V28H52"/><path d="M1148,28H1172V52"/><path d="M28,468V492H52"/><path d="M1148,492H1172V468"/></g>')
 A('<text x="64" y="50" font-size="12" letter-spacing="2.5" opacity=".75">OBJECT ASH-01 // KERR BLACK HOLE</text>')
+A('<text x="64" y="70" font-size="11" letter-spacing="1.5" opacity=".6">AI SUGGESTIONS REJECTED: MANY</text>')
 A('<circle cx="1034" cy="46" r="3.5" fill="#ff7a59"><animate attributeName="opacity" values="1;.15;1" dur="1.6s" repeatCount="indefinite"/></circle>')
 A('<text x="1136" y="50" font-size="12" letter-spacing="2.5" opacity=".75" text-anchor="end">LIVE FEED</text>')
 A('<text x="600" y="455" font-size="30" letter-spacing="14" fill="#f4f8ff" text-anchor="middle" font-weight="600">ASHWANI JHA</text>')

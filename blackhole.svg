@@ -409,6 +409,7 @@
 <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" fill="#9fd8ff" stroke="none">
 <g fill="none" stroke="#9fd8ff" stroke-opacity=".45" stroke-width="1.2"><path d="M28,52V28H52"/><path d="M1148,28H1172V52"/><path d="M28,468V492H52"/><path d="M1148,492H1172V468"/></g>
 <text x="64" y="50" font-size="12" letter-spacing="2.5" opacity=".75">OBJECT ASH-01 // KERR BLACK HOLE</text>
+<text x="64" y="70" font-size="11" letter-spacing="1.5" opacity=".6">AI SUGGESTIONS REJECTED: MANY</text>
 <circle cx="1034" cy="46" r="3.5" fill="#ff7a59"><animate attributeName="opacity" values="1;.15;1" dur="1.6s" repeatCount="indefinite"/></circle>
 <text x="1136" y="50" font-size="12" letter-spacing="2.5" opacity=".75" text-anchor="end">LIVE FEED</text>
 <text x="600" y="455" font-size="30" letter-spacing="14" fill="#f4f8ff" text-anchor="middle" font-weight="600">ASHWANI JHA</text>
